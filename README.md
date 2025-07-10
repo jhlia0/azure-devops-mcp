@@ -24,7 +24,7 @@ A Model Context Protocol (MCP) server that provides seamless integration with Az
 1. **Clone the repository**:
 
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/jhlia0/azure-devops-mcp.git
    cd mcp-server-azure-devops
    ```
 
