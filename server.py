@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 from fastmcp import FastMCP
 from pydantic import BaseModel
 
-from azure_devops_client import client, WorkItem, BacklogItem
+from src.client import client, WorkItem, BacklogItem
 from config import settings
 
 
@@ -19,11 +19,15 @@ class GetWorkItemsRequest(BaseModel):
 class GetWorkItemsByQueryRequest(BaseModel):
     """Request model for getting work items by WIQL query."""
     wiql: str
+    project: Optional[str] = None
+    include_project_filter: Optional[bool] = None
 
 
 class GetBacklogItemsRequest(BaseModel):
     """Request model for getting backlog items."""
     team_name: Optional[str] = None
+    project: Optional[str] = None
+    include_project_filter: Optional[bool] = None
 
 
 class GetWorkItemsByStateRequest(BaseModel):
@@ -32,6 +36,8 @@ class GetWorkItemsByStateRequest(BaseModel):
     work_item_type: Optional[str] = None
     assigned_to: Optional[str] = None
     max_results: Optional[int] = None
+    project: Optional[str] = None
+    include_project_filter: Optional[bool] = None
 
 
 class GetWorkItemsWithFiltersRequest(BaseModel):
@@ -45,6 +51,8 @@ class GetWorkItemsWithFiltersRequest(BaseModel):
     max_results: Optional[int] = None
     exclude_closed: Optional[bool] = None
     exclude_removed: Optional[bool] = None
+    project: Optional[str] = None
+    include_project_filter: Optional[bool] = None
 
 
 @mcp.tool()
@@ -71,13 +79,33 @@ async def get_work_items_by_query(request: GetWorkItemsByQueryRequest) -> List[D
     Get work items using WIQL (Work Item Query Language).
     
     Args:
-        request: Request containing WIQL query string
+        request: Request containing WIQL query string and optional project
         
     Returns:
         List of work items matching the query
     """
     try:
-        work_items = await client.get_work_items_by_wiql(request.wiql)
+        project = request.project or settings.project
+        wiql = request.wiql
+        
+        # If project filtering is requested and the WIQL doesn't already contain project filter
+        if (request.include_project_filter is True or 
+            (request.include_project_filter is None and settings.enable_project_filtering)):
+            if "[System.TeamProject]" not in wiql.upper():
+                # Add project filter to the query
+                project_filter = settings.get_project_filter(project, True)
+                if project_filter:
+                    # Insert project filter after WHERE clause
+                    if "WHERE" in wiql.upper():
+                        wiql = wiql.replace("WHERE", f"WHERE {project_filter} AND", 1)
+                    else:
+                        # If no WHERE clause, add one before ORDER BY or at the end
+                        if "ORDER BY" in wiql.upper():
+                            wiql = wiql.replace("ORDER BY", f"WHERE {project_filter} ORDER BY", 1)
+                        else:
+                            wiql = f"{wiql.rstrip()} WHERE {project_filter}"
+        print(wiql)
+        work_items = await client.get_work_items_by_wiql(wiql, project)
         return [item.model_dump() for item in work_items]
     except Exception as e:
         return [{"error": f"Failed to execute WIQL query: {str(e)}"}]
@@ -89,28 +117,68 @@ async def get_backlog_items(request: GetBacklogItemsRequest) -> List[Dict[str, A
     Get backlog items for a team or project.
     
     Args:
-        request: Request containing optional team name (uses default team if not specified)
+        request: Request containing optional team name and project (uses defaults if not specified)
         
     Returns:
         List of backlog items
     """
     try:
         team_name = request.team_name or settings.default_team
-        backlog_items = await client.get_backlog_items(team_name)
-        return [item.model_dump() for item in backlog_items]
+        project = request.project or settings.project
+        
+        # Try to get backlog items through the API first
+        try:
+            backlog_items = await client.get_backlog_items(team_name, project)
+            return [item.model_dump() for item in backlog_items]
+        except Exception:
+            # Fallback to WIQL query with project filtering support
+            conditions = [
+                "[System.WorkItemType] IN ('Product Backlog Item', 'User Story', 'Feature')",
+                "[System.State] <> 'Removed'"
+            ]
+            
+            # Add project filter if needed
+            project_filter = settings.get_project_filter(project, request.include_project_filter)
+            if project_filter:
+                conditions.append(project_filter)
+            
+            wiql = f"""
+            SELECT [System.Id], [System.Title], [System.WorkItemType], [System.State], [System.AssignedTo]
+            FROM WorkItems
+            WHERE {' AND '.join(conditions)}
+            ORDER BY [Microsoft.VSTS.Common.Priority] ASC
+            """
+            
+            work_items = await client.get_work_items_by_wiql(wiql, project)
+            return [
+                {
+                    "id": item.id,
+                    "title": item.title,
+                    "work_item_type": item.work_item_type,
+                    "state": item.state,
+                    "assigned_to": item.assigned_to,
+                    "priority": None,
+                    "story_points": None
+                }
+                for item in work_items
+            ]
     except Exception as e:
         return [{"error": f"Failed to fetch backlog items: {str(e)}"}]
 
 
 @mcp.tool()
-async def get_active_work_items() -> List[Dict[str, Any]]:
+async def get_active_work_items(project: Optional[str] = None, include_project_filter: Optional[bool] = None) -> List[Dict[str, Any]]:
     """
     Get all active work items in the project using default filters.
+    
+    Args:
+        project: Project name (uses default project if not specified)
     
     Returns:
         List of active work items
     """
-    default_filters = settings.get_default_wiql_filters()
+    target_project = project or settings.project
+    default_filters = settings.get_default_wiql_filters(target_project, include_project_filter)
     wiql = f"""
     SELECT [System.Id], [System.Title], [System.WorkItemType], [System.State], [System.AssignedTo]
     FROM WorkItems
@@ -120,7 +188,7 @@ async def get_active_work_items() -> List[Dict[str, Any]]:
     """
     
     try:
-        work_items = await client.get_work_items_by_wiql(wiql)
+        work_items = await client.get_work_items_by_wiql(wiql, target_project)
         # Limit results to default max
         return [item.model_dump() for item in work_items[:settings.default_max_results]]
     except Exception as e:
@@ -128,13 +196,14 @@ async def get_active_work_items() -> List[Dict[str, Any]]:
 
 
 @mcp.tool()
-async def get_my_work_items(assigned_to: Optional[str] = None, states: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+async def get_my_work_items(assigned_to: Optional[str] = None, states: Optional[List[str]] = None, project: Optional[str] = None, include_project_filter: Optional[bool] = None) -> List[Dict[str, Any]]:
     """
     Get work items assigned to a specific user.
     
     Args:
         assigned_to: Display name or email of the user (uses default user if not specified)
         states: List of states to filter by (e.g., ['Active', 'New', 'In Progress'])
+        project: Project name (uses default project if not specified)
         
     Returns:
         List of work items assigned to the user
@@ -143,13 +212,15 @@ async def get_my_work_items(assigned_to: Optional[str] = None, states: Optional[
     if not user:
         return [{"error": "No user specified and no default user configured"}]
     
+    target_project = project or settings.project
+    
     # Build state filter
     state_filter = ""
     if states:
         state_conditions = [f"[System.State] = '{state}'" for state in states]
         state_filter = f"AND ({' OR '.join(state_conditions)})"
     else:
-        state_filter = settings.get_default_wiql_filters()
+        state_filter = settings.get_default_wiql_filters(target_project, include_project_filter)
     
     wiql = f"""
     SELECT [System.Id], [System.Title], [System.WorkItemType], [System.State], [System.AssignedTo]
@@ -161,31 +232,34 @@ async def get_my_work_items(assigned_to: Optional[str] = None, states: Optional[
     """
     
     try:
-        work_items = await client.get_work_items_by_wiql(wiql)
+        work_items = await client.get_work_items_by_wiql(wiql, target_project)
         return [item.model_dump() for item in work_items[:settings.default_max_results]]
     except Exception as e:
         return [{"error": f"Failed to fetch work items for user: {str(e)}"}]
 
 
 @mcp.tool()
-async def get_work_items_by_type(work_item_type: str, states: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+async def get_work_items_by_type(work_item_type: str, states: Optional[List[str]] = None, project: Optional[str] = None, include_project_filter: Optional[bool] = None) -> List[Dict[str, Any]]:
     """
     Get work items by their type (e.g., Bug, Task, User Story).
     
     Args:
         work_item_type: Type of work item to filter by
         states: List of states to filter by (e.g., ['Active', 'New', 'In Progress'])
+        project: Project name (uses default project if not specified)
         
     Returns:
         List of work items of the specified type
     """
+    target_project = project or settings.project
+    
     # Build state filter
     state_filter = ""
     if states:
         state_conditions = [f"[System.State] = '{state}'" for state in states]
         state_filter = f"AND ({' OR '.join(state_conditions)})"
     else:
-        state_filter = settings.get_default_wiql_filters()
+        state_filter = settings.get_default_wiql_filters(target_project, include_project_filter)
     
     wiql = f"""
     SELECT [System.Id], [System.Title], [System.WorkItemType], [System.State], [System.AssignedTo]
@@ -196,7 +270,7 @@ async def get_work_items_by_type(work_item_type: str, states: Optional[List[str]
     """
     
     try:
-        work_items = await client.get_work_items_by_wiql(wiql)
+        work_items = await client.get_work_items_by_wiql(wiql, target_project)
         return [item.model_dump() for item in work_items[:settings.default_max_results]]
     except Exception as e:
         return [{"error": f"Failed to fetch work items by type: {str(e)}"}]
@@ -230,31 +304,40 @@ async def get_project_info() -> Dict[str, Any]:
 
 
 @mcp.tool()
-async def get_default_work_items() -> List[Dict[str, Any]]:
+async def get_default_work_items(project: Optional[str] = None, include_project_filter: Optional[bool] = None) -> List[Dict[str, Any]]:
     """
     Get work items using all default search settings.
     This is a convenient tool that applies all configured defaults.
     
+    Args:
+        project: Project name (uses default project if not specified)
+    
     Returns:
         List of work items matching default criteria
     """
+    target_project = project or settings.project
+    
     if settings.default_user:
         # If default user is set, get their work items
-        return await get_my_work_items()
+        return await get_my_work_items(project=target_project, include_project_filter=include_project_filter)
     else:
         # Otherwise get all active work items
-        return await get_active_work_items()
+        return await get_active_work_items(target_project, include_project_filter)
 
 
 @mcp.tool()
-async def get_default_backlog() -> List[Dict[str, Any]]:
+async def get_default_backlog(project: Optional[str] = None, include_project_filter: Optional[bool] = None) -> List[Dict[str, Any]]:
     """
     Get backlog items using default team settings.
+    
+    Args:
+        project: Project name (uses default project if not specified)
     
     Returns:
         List of backlog items for the default team
     """
-    request = GetBacklogItemsRequest(team_name=settings.default_team)
+    target_project = project or settings.project
+    request = GetBacklogItemsRequest(team_name=settings.default_team, project=target_project, include_project_filter=include_project_filter)
     return await get_backlog_items(request)
 
 
@@ -264,12 +347,14 @@ async def get_work_items_by_state(request: GetWorkItemsByStateRequest) -> List[D
     Get work items by their state (e.g., Active, New, In Progress, Closed).
     
     Args:
-        request: Request containing state and optional filters
+        request: Request containing state, optional filters and project
         
     Returns:
         List of work items in the specified state
     """
     try:
+        target_project = request.project or settings.project
+        
         # Build WIQL query
         conditions = [f"[System.State] = '{request.state}'"]
         
@@ -284,6 +369,11 @@ async def get_work_items_by_state(request: GetWorkItemsByStateRequest) -> List[D
         # Add assigned to filter if specified
         if request.assigned_to:
             conditions.append(f"[System.AssignedTo] = '{request.assigned_to}'")
+        
+        # Add project filter if needed
+        project_filter = settings.get_project_filter(target_project, request.include_project_filter)
+        if project_filter:
+            conditions.append(project_filter)
         
         # Add default filters (iteration, area paths)
         iteration_filter = ""
@@ -303,7 +393,7 @@ async def get_work_items_by_state(request: GetWorkItemsByStateRequest) -> List[D
         ORDER BY [System.ChangedDate] DESC
         """
         
-        work_items = await client.get_work_items_by_wiql(wiql)
+        work_items = await client.get_work_items_by_wiql(wiql, target_project)
         max_results = request.max_results or settings.default_max_results
         return [item.model_dump() for item in work_items[:max_results]]
     except Exception as e:
@@ -316,12 +406,13 @@ async def get_work_items_with_filters(request: GetWorkItemsWithFiltersRequest) -
     Get work items with comprehensive filtering options.
     
     Args:
-        request: Request containing various filter options
+        request: Request containing various filter options and project
         
     Returns:
         List of work items matching the filters
     """
     try:
+        target_project = request.project or settings.project
         conditions = []
         
         # State filter
@@ -361,6 +452,11 @@ async def get_work_items_with_filters(request: GetWorkItemsWithFiltersRequest) -
         if area_path:
             conditions.append(f"[System.AreaPath] UNDER '{area_path}'")
         
+        # Project filter
+        project_filter = settings.get_project_filter(target_project, request.include_project_filter)
+        if project_filter:
+            conditions.append(project_filter)
+        
         # Build WIQL query
         where_clause = " AND ".join(conditions) if conditions else "1 = 1"
         
@@ -371,7 +467,7 @@ async def get_work_items_with_filters(request: GetWorkItemsWithFiltersRequest) -
         ORDER BY [System.ChangedDate] DESC
         """
         
-        work_items = await client.get_work_items_by_wiql(wiql)
+        work_items = await client.get_work_items_by_wiql(wiql, target_project)
         max_results = request.max_results or settings.default_max_results
         return [item.model_dump() for item in work_items[:max_results]]
     except Exception as e:
@@ -379,18 +475,20 @@ async def get_work_items_with_filters(request: GetWorkItemsWithFiltersRequest) -
 
 
 @mcp.tool()
-async def get_closed_work_items(work_item_type: Optional[str] = None, assigned_to: Optional[str] = None) -> List[Dict[str, Any]]:
+async def get_closed_work_items(work_item_type: Optional[str] = None, assigned_to: Optional[str] = None, project: Optional[str] = None, include_project_filter: Optional[bool] = None) -> List[Dict[str, Any]]:
     """
     Get closed work items.
     
     Args:
         work_item_type: Optional work item type filter
         assigned_to: Optional assigned to filter
+        project: Project name (uses default project if not specified)
         
     Returns:
         List of closed work items
     """
     try:
+        target_project = project or settings.project
         conditions = ["[System.State] = 'Closed'"]
         
         if work_item_type:
@@ -402,6 +500,11 @@ async def get_closed_work_items(work_item_type: Optional[str] = None, assigned_t
         if assigned_to:
             conditions.append(f"[System.AssignedTo] = '{assigned_to}'")
         
+        # Add project filter if needed
+        project_filter = settings.get_project_filter(target_project, include_project_filter)
+        if project_filter:
+            conditions.append(project_filter)
+        
         wiql = f"""
         SELECT [System.Id], [System.Title], [System.WorkItemType], [System.State], [System.AssignedTo]
         FROM WorkItems
@@ -409,7 +512,7 @@ async def get_closed_work_items(work_item_type: Optional[str] = None, assigned_t
         ORDER BY [System.ChangedDate] DESC
         """
         
-        work_items = await client.get_work_items_by_wiql(wiql)
+        work_items = await client.get_work_items_by_wiql(wiql, target_project)
         return [item.model_dump() for item in work_items[:settings.default_max_results]]
     except Exception as e:
         return [{"error": f"Failed to fetch closed work items: {str(e)}"}]
@@ -443,17 +546,20 @@ async def get_available_states() -> List[Dict[str, Any]]:
 
 
 @mcp.tool()
-async def get_work_items_by_state_category(category: str) -> List[Dict[str, Any]]:
+async def get_work_items_by_state_category(category: str, project: Optional[str] = None, include_project_filter: Optional[bool] = None) -> List[Dict[str, Any]]:
     """
     Get work items by state category (active, completed, review).
     
     Args:
         category: State category ('active', 'completed', 'review')
+        project: Project name (uses default project if not specified)
         
     Returns:
         List of work items in the specified state category
     """
     try:
+        target_project = project or settings.project
+        
         if category.lower() == "active":
             states = settings.default_active_states_list
         elif category.lower() == "completed":
@@ -473,6 +579,11 @@ async def get_work_items_by_state_category(category: str) -> List[Dict[str, Any]
         if settings.default_area_path:
             default_filters += f" AND [System.AreaPath] UNDER '{settings.default_area_path}'"
         
+        # Add project filter if needed
+        project_filter = settings.get_project_filter(target_project, include_project_filter)
+        if project_filter:
+            default_filters += f" AND {project_filter}"
+        
         wiql = f"""
         SELECT [System.Id], [System.Title], [System.WorkItemType], [System.State], [System.AssignedTo]
         FROM WorkItems
@@ -482,7 +593,7 @@ async def get_work_items_by_state_category(category: str) -> List[Dict[str, Any]
         ORDER BY [System.ChangedDate] DESC
         """
         
-        work_items = await client.get_work_items_by_wiql(wiql)
+        work_items = await client.get_work_items_by_wiql(wiql, target_project)
         return [item.model_dump() for item in work_items[:settings.default_max_results]]
     except Exception as e:
         return [{"error": f"Failed to fetch work items by state category: {str(e)}"}]

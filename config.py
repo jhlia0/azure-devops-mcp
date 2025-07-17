@@ -19,7 +19,7 @@ class AzureDevOpsSettings(BaseSettings):
     personal_access_token: str = Field(..., alias="AZURE_DEVOPS_PAT", description="Personal Access Token for Azure DevOps")
     
     # API configuration
-    api_version: str = Field(default="7.0", description="Azure DevOps REST API version")
+    api_version: str = Field(default="7.1", description="Azure DevOps REST API version")
     base_url: str = Field(default="https://dev.azure.com", description="Azure DevOps base URL")
     
     # Default search settings
@@ -40,6 +40,9 @@ class AzureDevOpsSettings(BaseSettings):
     default_active_states: str = Field(default="Active,New,In Progress,To Do,Doing", description="Default active states (comma-separated)")
     default_completed_states: str = Field(default="Closed,Done,Resolved", description="Default completed states (comma-separated)")
     default_review_states: str = Field(default="Code Review,Testing,Approved", description="Default review states (comma-separated)")
+    
+    # Project filtering settings
+    enable_project_filtering: bool = Field(default=True, description="Enable project filtering in WIQL queries by default")
     
     @property
     def api_base_url(self) -> str:
@@ -85,8 +88,23 @@ class AzureDevOpsSettings(BaseSettings):
             return " AND " + " AND ".join(conditions)
         return ""
     
-    def get_default_wiql_filters(self) -> str:
-        """Get default WIQL filters including state, iteration, and area."""
+    def get_project_filter(self, project: str, force_filter: Optional[bool] = None) -> str:
+        """Get project filter for WIQL queries.
+        
+        Args:
+            project: Project name to filter by
+            force_filter: Override the default project filtering setting
+            
+        Returns:
+            Project filter string or empty string if filtering is disabled
+        """
+        should_filter = force_filter if force_filter is not None else self.enable_project_filtering
+        if should_filter and project:
+            return f"[System.TeamProject] = '{project}'"
+        return ""
+    
+    def get_default_wiql_filters(self, project: Optional[str] = None, include_project_filter: Optional[bool] = None) -> str:
+        """Get default WIQL filters including state, iteration, area, and optionally project."""
         filters = []
         
         # State filters
@@ -101,6 +119,12 @@ class AzureDevOpsSettings(BaseSettings):
         # Area path filter
         if self.default_area_path:
             filters.append(f"[System.AreaPath] UNDER '{self.default_area_path}'")
+        
+        # Project filter
+        if project:
+            project_filter = self.get_project_filter(project, include_project_filter)
+            if project_filter:
+                filters.append(project_filter)
         
         if filters:
             return " AND " + " AND ".join(filters)
