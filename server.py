@@ -68,6 +68,14 @@ class UpdateWorkItemTitleRequest(BaseModel):
     project: Optional[str] = None
 
 
+class UpdateWorkItemDescriptionRequest(BaseModel):
+    """Request model for updating work item description."""
+
+    id: int
+    description: str
+    project: Optional[str] = None
+
+
 @mcp.tool()
 async def get_work_items(request: GetWorkItemsRequest) -> List[Dict[str, Any]]:
     """
@@ -661,6 +669,27 @@ async def update_work_item_title(request: UpdateWorkItemTitleRequest) -> Dict[st
         return updated_item.model_dump()
     except Exception as e:
         return {"error": f"Failed to update work item title: {str(e)}"}
+
+
+@mcp.tool()
+async def update_work_item_description(request: UpdateWorkItemDescriptionRequest) -> Dict[str, Any]:
+    """
+    Update the description of a work item.
+
+    Args:
+        request: Request containing work item ID, new description, and optional project
+
+    Returns:
+        Updated work item information or error message
+    """
+    try:
+        project = request.project or settings.project
+        updated_item = await client.update_work_item_description(
+            request.id, request.description, project
+        )
+        return updated_item.model_dump()
+    except Exception as e:
+        return {"error": f"Failed to update work item description: {str(e)}"}
 
 
 @mcp.tool()
