@@ -60,6 +60,14 @@ class GetWorkItemsWithFiltersRequest(BaseModel):
     include_project_filter: Optional[bool] = None
 
 
+class UpdateWorkItemTitleRequest(BaseModel):
+    """Request model for updating work item title."""
+
+    id: int
+    title: str
+    project: Optional[str] = None
+
+
 @mcp.tool()
 async def get_work_items(request: GetWorkItemsRequest) -> List[Dict[str, Any]]:
     """
@@ -632,6 +640,27 @@ async def get_available_states() -> List[Dict[str, Any]]:
     ]
 
     return common_states
+
+
+@mcp.tool()
+async def update_work_item_title(request: UpdateWorkItemTitleRequest) -> Dict[str, Any]:
+    """
+    Update the title of a work item.
+
+    Args:
+        request: Request containing work item ID, new title, and optional project
+
+    Returns:
+        Updated work item information or error message
+    """
+    try:
+        project = request.project or settings.project
+        updated_item = await client.update_work_item_title(
+            request.id, request.title, project
+        )
+        return updated_item.model_dump()
+    except Exception as e:
+        return {"error": f"Failed to update work item title: {str(e)}"}
 
 
 @mcp.tool()

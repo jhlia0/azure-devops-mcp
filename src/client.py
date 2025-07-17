@@ -233,6 +233,65 @@ class AzureDevOpsClient:
 
         return response.json()
 
+    async def update_work_item_title(
+        self, work_item_id: int, new_title: str, project: Optional[str] = None
+    ) -> WorkItem:
+        """Update work item title using Azure DevOps REST API."""
+        target_project = project or self.default_project
+        base_url = f"https://dev.azure.com/{self.organization}/{target_project}/_apis"
+        endpoint = f"wit/workitems/{work_item_id}"
+        url = f"{base_url}/{endpoint}"
+
+        # JSON Patch document to update title
+        patch_document = [
+            {
+                "op": "replace",
+                "path": "/fields/System.Title",
+                "value": new_title
+            }
+        ]
+
+        # Set proper content type for JSON Patch
+        headers = {
+            **self.headers,
+            "Content-Type": "application/json-patch+json"
+        }
+
+        response = await self.client.patch(
+            url,
+            params={"api-version": self.api_version},
+            json=patch_document,
+            headers=headers
+        )
+        
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            print(
+                f"Error response {exc.response.status_code} while requesting {exc.request.url!r}.\\n{exc.response.text}"
+            )
+            raise exc
+
+        # Parse the response to get the updated work item
+        data = response.json()
+        fields = data.get("fields", {})
+        
+        return WorkItem(
+            id=data["id"],
+            title=fields.get("System.Title", ""),
+            work_item_type=fields.get("System.WorkItemType", ""),
+            state=fields.get("System.State", ""),
+            assigned_to=(
+                fields.get("System.AssignedTo", {}).get("displayName")
+                if fields.get("System.AssignedTo")
+                else None
+            ),
+            created_date=fields.get("System.CreatedDate", ""),
+            changed_date=fields.get("System.ChangedDate", ""),
+            description=fields.get("System.Description", ""),
+            tags=fields.get("System.Tags", ""),
+        )
+
     async def get_backlog_items(
         self, team_name: Optional[str] = None, project: Optional[str] = None
     ) -> List[BacklogItem]:
