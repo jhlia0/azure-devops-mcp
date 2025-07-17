@@ -351,6 +351,37 @@ class AzureDevOpsClient:
             tags=fields.get("System.Tags", ""),
         )
 
+    async def add_work_item_comment(
+        self, work_item_id: int, comment_text: str, project: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Add a comment to a work item using Azure DevOps REST API."""
+        target_project = project or self.default_project
+        base_url = f"https://dev.azure.com/{self.organization}/{target_project}/_apis"
+        endpoint = f"wit/workItems/{work_item_id}/comments"
+        url = f"{base_url}/{endpoint}"
+
+        # Request body for adding comment
+        comment_data = {
+            "text": comment_text
+        }
+
+        response = await self.client.post(
+            url,
+            params={"api-version": "7.1-preview.4"},
+            json=comment_data,
+        )
+        
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            print(
+                f"Error response {exc.response.status_code} while requesting {exc.request.url!r}.\\n{exc.response.text}"
+            )
+            raise exc
+
+        # Return the comment response data
+        return response.json()
+
     async def get_backlog_items(
         self, team_name: Optional[str] = None, project: Optional[str] = None
     ) -> List[BacklogItem]:

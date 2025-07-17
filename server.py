@@ -76,6 +76,14 @@ class UpdateWorkItemDescriptionRequest(BaseModel):
     project: Optional[str] = None
 
 
+class AddWorkItemCommentRequest(BaseModel):
+    """Request model for adding comment to work item."""
+
+    id: int
+    comment: str
+    project: Optional[str] = None
+
+
 @mcp.tool()
 async def get_work_items(request: GetWorkItemsRequest) -> List[Dict[str, Any]]:
     """
@@ -690,6 +698,27 @@ async def update_work_item_description(request: UpdateWorkItemDescriptionRequest
         return updated_item.model_dump()
     except Exception as e:
         return {"error": f"Failed to update work item description: {str(e)}"}
+
+
+@mcp.tool()
+async def add_work_item_comment(request: AddWorkItemCommentRequest) -> Dict[str, Any]:
+    """
+    Add a comment to a work item.
+
+    Args:
+        request: Request containing work item ID, comment text, and optional project
+
+    Returns:
+        Comment information or error message
+    """
+    try:
+        project = request.project or settings.project
+        comment_data = await client.add_work_item_comment(
+            request.id, request.comment, project
+        )
+        return comment_data
+    except Exception as e:
+        return {"error": f"Failed to add work item comment: {str(e)}"}
 
 
 @mcp.tool()
