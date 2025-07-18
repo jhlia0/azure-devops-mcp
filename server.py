@@ -84,6 +84,18 @@ class AddWorkItemCommentRequest(BaseModel):
     project: Optional[str] = None
 
 
+class CreateWorkItemRequest(BaseModel):
+    """Request model for creating new work item."""
+
+    work_item_type: str
+    title: str
+    description: Optional[str] = None
+    assigned_to: Optional[str] = None
+    area_path: Optional[str] = None
+    iteration_path: Optional[str] = None
+    project: Optional[str] = None
+
+
 @mcp.tool()
 async def get_work_items(request: GetWorkItemsRequest) -> List[Dict[str, Any]]:
     """
@@ -719,6 +731,33 @@ async def add_work_item_comment(request: AddWorkItemCommentRequest) -> Dict[str,
         return comment_data
     except Exception as e:
         return {"error": f"Failed to add work item comment: {str(e)}"}
+
+
+@mcp.tool()
+async def create_work_item(request: CreateWorkItemRequest) -> Dict[str, Any]:
+    """
+    Create a new work item.
+
+    Args:
+        request: Request containing work item details including type, title, and optional fields
+
+    Returns:
+        Created work item information or error message
+    """
+    try:
+        project = request.project or settings.project
+        created_item = await client.create_work_item(
+            work_item_type=request.work_item_type,
+            title=request.title,
+            description=request.description,
+            assigned_to=request.assigned_to,
+            area_path=request.area_path,
+            iteration_path=request.iteration_path,
+            project=project
+        )
+        return created_item.model_dump()
+    except Exception as e:
+        return {"error": f"Failed to create work item: {str(e)}"}
 
 
 @mcp.tool()
