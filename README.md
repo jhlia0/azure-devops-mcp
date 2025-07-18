@@ -40,12 +40,13 @@ A Model Context Protocol (MCP) server that provides seamless integration with Az
    cp .env.example .env
    ```
 
-   Edit the `.env` file with your Azure DevOps credentials:
+   Edit the `.env` file with your Azure DevOps credentials. It's highly recommended to set `DEFAULT_USER` if you plan to query your own work items:
 
-   ```env
+   ```bash
    ORGANIZATION=your-organization
    PROJECT=your-project
    AZURE_DEVOPS_PAT=your-personal-access-token
+   DEFAULT_USER=your-email@example.com # (Optional) Recommended for personal work item queries
    ```
 
 4. **Run the server**:
@@ -65,49 +66,56 @@ A Model Context Protocol (MCP) server that provides seamless integration with Az
 
 ### Optional Configuration
 
-| Variable                   | Default                                    | Description                           |
-| -------------------------- | ------------------------------------------ | ------------------------------------- |
-| `DEFAULT_TEAM`             | -                                          | Default team name for backlog queries |
-| `DEFAULT_USER`             | -                                          | Default user for work item queries    |
-| `DEFAULT_WORK_ITEM_TYPES`  | `Bug,Task,User Story,Product Backlog Item` | Default work item types               |
-| `DEFAULT_MAX_RESULTS`      | `100`                                      | Maximum number of results to return   |
-| `EXCLUDE_CLOSED`           | `true`                                     | Exclude closed work items by default  |
-| `EXCLUDE_REMOVED`          | `true`                                     | Exclude removed work items by default |
-| `DEFAULT_ITERATION_PATH`   | -                                          | Default iteration path for queries    |
-| `DEFAULT_AREA_PATH`        | -                                          | Default area path for queries         |
-| `DEFAULT_ACTIVE_STATES`    | `Active,New,In Progress,To Do,Doing`       | Default active states                 |
-| `DEFAULT_COMPLETED_STATES` | `Closed,Done,Resolved`                     | Default completed states              |
-| `DEFAULT_REVIEW_STATES`    | `Code Review,Testing,Approved`             | Default review states                 |
+| Variable                   | Default                                    | Description                                                                       |
+| -------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------- |
+| `DEFAULT_TEAM`             | -                                          | Default team name for backlog queries                                             |
+| `DEFAULT_USER`             | -                                          | Default user for work item queries (recommended for querying your own work items) |
+| `DEFAULT_WORK_ITEM_TYPES`  | `Bug,Task,User Story,Product Backlog Item` | Default work item types                                                           |
+| `DEFAULT_MAX_RESULTS`      | `100`                                      | Maximum number of results to return                                               |
+| `EXCLUDE_CLOSED`           | `true`                                     | Exclude closed work items by default                                              |
+| `EXCLUDE_REMOVED`          | `true`                                     | Exclude removed work items by default                                             |
+| `DEFAULT_ITERATION_PATH`   | -                                          | Default iteration path for queries                                                |
+| `DEFAULT_AREA_PATH`        | -                                          | Default area path for queries                                                     |
+| `DEFAULT_ACTIVE_STATES`    | `Active,New,In Progress,To Do,Doing`       | Default active states                                                             |
+| `DEFAULT_COMPLETED_STATES` | `Closed,Done,Resolved`                     | Default completed states                                                          |
+| `DEFAULT_REVIEW_STATES`    | `Code Review,Testing,Approved`             | Default review states                                                             |
 
 ## Available MCP Tools
 
 ### Core Work Item Tools
 
 - **`get_work_items`** - Get work items by their IDs
-- **`get_work_items_by_query`** - Execute custom WIQL queries
-- **`get_work_items_by_type`** - Get work items by type (Bug, Task, etc.) with optional state filtering
-- **`get_work_items_by_state`** - Get work items by specific state with additional filters
-- **`get_work_items_with_filters`** - Advanced filtering with multiple criteria
+- **`get_work_items_by_query`** - Execute custom WIQL queries with optional project filtering
+- **`get_work_items_by_type`** - Get work items by type (Bug, Task, etc.) with optional state and project filtering
+- **`get_work_items_by_state`** - Get work items by specific state with additional filters and optional project filtering
+- **`get_work_items_with_filters`** - Advanced filtering with multiple criteria and optional project filtering
 
 ### User-Focused Tools
 
-- **`get_my_work_items`** - Get work items assigned to a specific user with state filtering
-- **`get_active_work_items`** - Get all active work items using default filters
+- **`get_my_work_items`** - Get work items assigned to a specific user with state and optional project filtering
+- **`get_active_work_items`** - Get all active work items using default filters and optional project filtering
 
 ### Backlog Tools
 
-- **`get_backlog_items`** - Get backlog items for a team
-- **`get_default_backlog`** - Get backlog items using default team settings
+- **`get_backlog_items`** - Get backlog items for a team with optional project filtering
+- **`get_default_backlog`** - Get backlog items using default team settings with optional project filtering
 
 ### State Management Tools
 
-- **`get_work_items_by_state_category`** - Get work items by state category (active, completed, review)
-- **`get_closed_work_items`** - Get closed work items with optional filters
+- **`get_work_items_by_state_category`** - Get work items by state category (active, completed, review) with optional project filtering
+- **`get_closed_work_items`** - Get closed work items with optional filters and project filtering
 - **`get_available_states`** - Get list of common work item states
+
+### Work Item Modification Tools
+
+- **`update_work_item_title`** - Update the title of a work item
+- **`update_work_item_description`** - Update the description of a work item
+- **`add_work_item_comment`** - Add a comment to a work item
+- **`create_work_item`** - Create a new work item
 
 ### Utility Tools
 
-- **`get_default_work_items`** - Get work items using all default search settings
+- **`get_default_work_items`** - Get work items using all default search settings with optional project filtering
 - **`get_project_info`** - Get project configuration and default settings
 
 ## Usage Examples
@@ -170,6 +178,36 @@ get_work_items_by_query({
     ORDER BY [System.CreatedDate] DESC
     """
 })
+
+# Execute custom WIQL query with project filter
+get_work_items_by_query({
+    "wiql": "SELECT [System.Id] FROM WorkItems WHERE [System.WorkItemType] = 'Bug'",
+    "project": "MyProject",
+    "include_project_filter": True
+})
+```
+
+### Work Item Modification
+
+```python
+# Update work item title
+update_work_item_title({"id": 1234, "title": "New Title for Work Item"})
+
+# Update work item description
+update_work_item_description({"id": 1234, "description": "Updated description text."})
+
+# Add a comment to a work item
+add_work_item_comment({"id": 1234, "comment": "This is a new comment."})
+
+# Create a new bug
+create_work_item({
+    "work_item_type": "Bug",
+    "title": "New Bug Found",
+    "description": "This is a description of the new bug.",
+    "assigned_to": "user@example.com",
+    "area_path": "MyProject\Area\SubArea"
+})
+
 ```
 
 ## Authentication
