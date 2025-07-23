@@ -159,6 +159,8 @@ class EpicHierarchyExporter:
                             md_lines.append(
                                 f"  - **Assigned To:** {task.assigned_to or 'Unassigned'}"
                             )
+                            if task.description:
+                                md_lines.append(f"  - **Description:** {task.description}")
                         md_lines.append("")
 
                     # Bugs
@@ -171,6 +173,8 @@ class EpicHierarchyExporter:
                             md_lines.append(
                                 f"  - **Assigned To:** {bug.assigned_to or 'Unassigned'}"
                             )
+                            if bug.description:
+                                md_lines.append(f"  - **Description:** {bug.description}")
                         md_lines.append("")
             else:
                 md_lines.append("*No User Stories found for this Feature*")
